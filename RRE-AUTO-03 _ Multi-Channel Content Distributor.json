@@ -1,0 +1,708 @@
+{
+  "name": "RRE-AUTO-03 | Multi-Channel Content Distributor",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_DRIVE_FOLDER_ID",
+          "mode": "id"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "b87dc79e-abfd-4925-832c-92deec805735",
+      "name": "Google Drive - Watch Folder",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2080,
+        208
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "ox605z4gwZuZ6twz",
+          "name": "Google Drive account aifirslink"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "06fe4be1-faca-44f9-88b1-a6366004fef0",
+      "name": "Google Drive - Download File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -1856,
+        208
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "ox605z4gwZuZ6twz",
+          "name": "Google Drive account aifirslink"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const file = $input.first();\nconst triggerData = $('Google Drive - Watch Folder').first().json;\n\nconst mimeType = triggerData.mimeType || 'image/jpeg';\nconst fileName = triggerData.name || 'asset';\nconst fileId = triggerData.id;\nconst webViewLink = triggerData.webViewLink || '';\n\nconst isVideo = mimeType.startsWith('video/');\nconst isImage = mimeType.startsWith('image/');\n\nlet base64Data = '';\nif (file.binary && file.binary.data) {\n  base64Data = file.binary.data.data || '';\n}\n\nreturn [{\n  json: {\n    fileId,\n    fileName,\n    mimeType,\n    isVideo,\n    isImage,\n    webViewLink,\n    base64Data,\n    assetType: isVideo ? 'video' : 'image'\n  },\n  binary: file.binary\n}];"
+      },
+      "id": "0b0a427a-7f02-44f4-8fac-693035a0d6d1",
+      "name": "Prepare Asset Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1648,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"data:{{ $json.mimeType }};base64,{{ $json.base64Data }}\",\n            \"detail\": \"high\"\n          }\n        },\n        {\n          \"type\": \"text\",\n          \"text\": \"You are a resort marketing expert. Analyze this image/video thumbnail in 2-3 vivid sentences. Describe: 1) What is shown (scene, subjects, activities), 2) The mood and atmosphere, 3) Key visual elements (colors, lighting, setting). Be specific and evocative. This description will be used to generate social media captions for a luxury resort.\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "756596a7-8e5a-4438-bed8-ce9f5cdb5376",
+      "name": "GPT-4o Vision - Analyze Asset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1424,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HJvkWfgeaAJ5ZEsp",
+          "name": "Runway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst visualDescription = response.choices[0].message.content;\n\nconst assetMeta = $('Prepare Asset Metadata').first().json;\n\nreturn [{\n  json: {\n    ...assetMeta,\n    visualDescription\n  }\n}];"
+      },
+      "id": "387536a8-e75d-49b2-89c5-61519a0f0362",
+      "name": "Extract Vision Description",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"max_tokens\": 1500,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an expert social media manager for Rosario Resort & Estates, a luxury tropical resort in the Philippines. You write platform-optimized captions that drive engagement and bookings. Always respond with valid JSON only.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Based on this visual asset description: '{{ $json.visualDescription }}'\\n\\nGenerate THREE platform-specific social media captions for our resort. Return ONLY a JSON object with this exact structure:\\n{\\n  \\\"facebook\\\": {\\n    \\\"caption\\\": \\\"[150-200 word caption. Storytelling tone. Warm and inviting. Include: vivid scene description, what guests experience, specific amenities mentioned naturally, location tag (Cavite, Philippines), booking CTA with website URL placeholder [WEBSITE_URL], 2-3 relevant hashtags]\\\",\\n    \\\"hashtags\\\": [\\\"#RosarioResort\\\", \\\"#LuxuryResort\\\", \\\"#PhilippineResort\\\"]\\n  },\\n  \\\"instagram\\\": {\\n    \\\"caption\\\": \\\"[60-80 word caption. Aesthetic, dreamy tone. Start with a powerful one-liner. Use 5-7 visual emojis naturally woven in. End with a question to drive comments.]\\\",\\n    \\\"hashtags\\\": [\\\"#RosarioResort\\\", \\\"#ResortLife\\\", \\\"#TropicalParadise\\\", \\\"#LuxuryTravel\\\", \\\"#PhilippineBeauty\\\", \\\"#IslandVibes\\\", \\\"#VacationGoals\\\", \\\"#HotelLife\\\", \\\"#TravelPH\\\", \\\"#LuxuryResort\\\"]\\n  },\\n  \\\"tiktok\\\": {\\n    \\\"caption\\\": \\\"[40-60 word caption. High energy, Gen Z tone. Start with a HOOK (provocative question or bold statement in CAPS). Raw, authentic vibe. Include trending keywords like POV, telling me, no cap, fr fr. End with a challenge or duet invite.]\\\",\\n    \\\"hashtags\\\": [\\\"#RosarioResort\\\", \\\"#ResortTok\\\", \\\"#PhilippineTravel\\\", \\\"#TravelTok\\\", \\\"#LuxuryResortCheck\\\", \\\"#FYP\\\", \\\"#PinoyTravel\\\"]\\n  }\\n}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "8def99de-c653-435f-9ef5-845c42cbfbdc",
+      "name": "GPT-4o - Generate Platform Captions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -976,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HJvkWfgeaAJ5ZEsp",
+          "name": "Runway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst rawContent = response.choices[0].message.content;\n\nlet captions;\ntry {\n  captions = JSON.parse(rawContent);\n} catch (e) {\n  const cleaned = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();\n  captions = JSON.parse(cleaned);\n}\n\nconst assetMeta = $('Extract Vision Description').first().json;\n\nconst fbCaption = captions.facebook.caption + '\\n\\n' + (captions.facebook.hashtags || []).join(' ');\nconst igCaption = captions.instagram.caption + '\\n\\n' + (captions.instagram.hashtags || []).join(' ');\nconst ttCaption = captions.tiktok.caption + '\\n\\n' + (captions.tiktok.hashtags || []).join(' ');\n\nreturn [{\n  json: {\n    ...assetMeta,\n    captions: {\n      facebook: fbCaption,\n      instagram: igCaption,\n      tiktok: ttCaption\n    },\n    rawCaptions: captions,\n    generatedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "771ee260-eb35-4106-8d9b-b37464ad3766",
+      "name": "Parse & Format Captions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -768,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "condition-is-image",
+              "leftValue": "={{ $json.isImage }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "73fcbcb0-16e7-4600-b08b-a6edd99e6329",
+      "name": "Route: Image or Video?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -544,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/YOUR_FB_PAGE_ID/photos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $('Parse & Format Captions').first().json.webViewLink }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $('Parse & Format Captions').first().json.captions.facebook }}"
+            },
+            {
+              "name": "published",
+              "value": "false"
+            },
+            {
+              "name": "access_token",
+              "value": "YOUR_FACEBOOK_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b01ede66-90a2-4b35-82bb-645bdd24ff4a",
+      "name": "Facebook - Upload Image Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2064,
+        592
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HJvkWfgeaAJ5ZEsp",
+          "name": "Runway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/YOUR_FB_PAGE_ID/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file_url",
+              "value": "={{ $('Parse & Format Captions').first().json.webViewLink }}"
+            },
+            {
+              "name": "description",
+              "value": "={{ $('Parse & Format Captions').first().json.captions.facebook }}"
+            },
+            {
+              "name": "published",
+              "value": "false"
+            },
+            {
+              "name": "access_token",
+              "value": "YOUR_FACEBOOK_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "596dae50-7a77-4ad3-b212-0eb2954e13a5",
+      "name": "Facebook - Upload Video Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -992,
+        816
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HJvkWfgeaAJ5ZEsp",
+          "name": "Runway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"image_url\": \"{{ $('Parse & Format Captions').first().json.webViewLink }}\",\n  \"caption\": \"{{ $('Parse & Format Captions').first().json.captions.instagram }}\",\n  \"access_token\": \"YOUR_INSTAGRAM_ACCESS_TOKEN\"\n}",
+        "options": {}
+      },
+      "id": "fa10f6d5-1c43-4929-a787-072773934599",
+      "name": "Instagram - Create Media Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1840,
+        592
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HJvkWfgeaAJ5ZEsp",
+          "name": "Runway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const containerResponse = $input.first().json;\nconst containerId = containerResponse.id;\n\nreturn [{\n  json: {\n    containerId,\n    caption: $('Parse & Format Captions').first().json.captions.instagram\n  }\n}];"
+      },
+      "id": "483049d5-6818-42a9-97e6-18af3cdef8fd",
+      "name": "Store IG Container ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1632,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "d97278b0-ca88-40fc-9da4-6f8f1940f06e",
+      "name": "Wait 30s - IG Processing",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -1408,
+        592
+      ],
+      "webhookId": "ig-wait-webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID/media_publish",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"creation_id\": \"{{ $json.containerId }}\",\n  \"access_token\": \"YOUR_INSTAGRAM_ACCESS_TOKEN\"\n}",
+        "options": {}
+      },
+      "id": "68445481-c819-4e2b-9aa7-30d0875cceee",
+      "name": "Instagram - Publish Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1184,
+        592
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HJvkWfgeaAJ5ZEsp",
+          "name": "Runway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/content/init/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"post_info\": {\n    \"title\": \"{{ $('Parse & Format Captions').first().json.captions.tiktok }}\",\n    \"privacy_level\": \"SELF_ONLY\",\n    \"disable_duet\": false,\n    \"disable_comment\": false,\n    \"disable_stitch\": false,\n    \"video_cover_timestamp_ms\": 1000\n  },\n  \"source_info\": {\n    \"source\": \"PULL_FROM_URL\",\n    \"video_url\": \"{{ $('Parse & Format Captions').first().json.webViewLink }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "4a90dd92-f9ec-4813-8752-b3cc2d65ff86",
+      "name": "TikTok - Upload Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -992,
+        1056
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HJvkWfgeaAJ5ZEsp",
+          "name": "Runway"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fbResult = (() => {\n  try { return $('Facebook - Upload Image Draft').first().json; } catch(e) {\n    try { return $('Facebook - Upload Video Draft').first().json; } catch(e2) { return {}; }\n  }\n})();\n\nconst igResult = (() => {\n  try { return $('Instagram - Publish Post').first().json; } catch(e) { return {}; }\n})();\n\nconst ttResult = (() => {\n  try { return $('TikTok - Upload Draft').first().json; } catch(e) { return {}; }\n})();\n\nconst meta = $('Parse & Format Captions').first().json;\n\nconst summary = {\n  workflow: 'RRE-AUTO-03 Multi-Channel Content Distributor',\n  processedAt: new Date().toISOString(),\n  asset: {\n    name: meta.fileName,\n    type: meta.assetType,\n    driveId: meta.fileId\n  },\n  visualDescription: meta.visualDescription,\n  results: {\n    facebook: {\n      status: fbResult.id ? 'SUCCESS' : 'CHECK_MANUALLY',\n      postId: fbResult.id || null,\n      caption: meta.captions.facebook\n    },\n    instagram: {\n      status: igResult.id ? 'SUCCESS' : 'CHECK_MANUALLY',\n      postId: igResult.id || null,\n      caption: meta.captions.instagram\n    },\n    tiktok: {\n      status: ttResult.publish_id ? 'DRAFT_SAVED' : 'CHECK_MANUALLY',\n      publishId: ttResult.publish_id || null,\n      caption: meta.captions.tiktok\n    }\n  }\n};\n\nreturn [{ json: summary }];"
+      },
+      "id": "8e528c2e-da2f-4d41-9d02-d4b2eb1043b0",
+      "name": "Build Summary Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK_PATH",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"✅ *RRE-AUTO-03: Content Distributed!*\\n\\n📁 *Asset:* {{ $json.asset.name }} ({{ $json.asset.type }})\\n🕐 *Processed:* {{ $json.processedAt }}\\n\\n🔍 *AI Description:*\\n_{{ $json.visualDescription }}_\\n\\n📊 *Results:*\\n• 📘 Facebook: {{ $json.results.facebook.status }} {{ $json.results.facebook.postId ? '(ID: ' + $json.results.facebook.postId + ')' : '' }}\\n• 📸 Instagram: {{ $json.results.instagram.status }} {{ $json.results.instagram.postId ? '(ID: ' + $json.results.instagram.postId + ')' : '' }}\\n• 🎵 TikTok: {{ $json.results.tiktok.status }} {{ $json.results.tiktok.publishId ? '(ID: ' + $json.results.tiktok.publishId + ')' : '' }}\\n\\n_Review your drafts and publish when ready!_ 🏖️\"\n}",
+        "options": {}
+      },
+      "id": "130c72f6-f436-45ab-90d8-0cc7460a71b6",
+      "name": "Slack - Send Success Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -512,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Content Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.processedAt }}",
+            "Asset Name": "={{ $json.asset.name }}",
+            "Asset Type": "={{ $json.asset.type }}",
+            "Drive ID": "={{ $json.asset.driveId }}",
+            "AI Description": "={{ $json.visualDescription }}",
+            "Facebook Status": "={{ $json.results.facebook.status }}",
+            "Facebook Post ID": "={{ $json.results.facebook.postId }}",
+            "Facebook Caption": "={{ $json.results.facebook.caption }}",
+            "Instagram Status": "={{ $json.results.instagram.status }}",
+            "Instagram Post ID": "={{ $json.results.instagram.postId }}",
+            "Instagram Caption": "={{ $json.results.instagram.caption }}",
+            "TikTok Status": "={{ $json.results.tiktok.status }}",
+            "TikTok Publish ID": "={{ $json.results.tiktok.publishId }}",
+            "TikTok Caption": "={{ $json.results.tiktok.caption }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "44e9072f-c771-41be-8e1c-23656dbd491d",
+      "name": "Google Sheets - Log Content",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        -512,
+        896
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ne5lFAYcDs8mggLN",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "# Multi-Channel Content Distributor\n## Drive Trigger → Download → Prepare Metadata\n  ### → GPT-4o Vision Analysis → Extract Description\n  ### → GPT-4o Caption Generator (FB + IG + TikTok) → Parse Captions\n  ### → Route: Image or Video?\n      **├─ Image → FB Photo Draft + IG Container → Wait → IG Publish\n      └─ Video → FB Video Draft + TikTok Draft\n  ### → Build Summary → Slack Notify + Sheets Log",
+        "height": 416,
+        "width": 624,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1744,
+        784
+      ],
+      "typeVersion": 1,
+      "id": "5c9d3414-0875-429b-b94f-1cf7fe31156f",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "# Important notes:\n\n**Instagram** flow includes a mandatory 30-second wait node — Meta requires media processing time between container creation and publish\n**TikTok** posts land in SELF_ONLY draft mode by default (safe for review before going public — change privacy_level to PUBLIC_TO_EVERYONE when ready)\n**Facebook** posts use published: false so they land as unpublished drafts for your review\n\nThe Google Sheets node auto-logs every run — create a sheet named \"Content Log\" with the column headers matching the field names in that node",
+        "height": 416,
+        "width": 480,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -2240,
+        784
+      ],
+      "typeVersion": 1,
+      "id": "7ae2361d-49ac-493f-9ce9-63ededb6c13b",
+      "name": "Sticky Note1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Drive - Watch Folder": {
+      "main": [
+        [
+          {
+            "node": "Google Drive - Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive - Download File": {
+      "main": [
+        [
+          {
+            "node": "Prepare Asset Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Asset Metadata": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o Vision - Analyze Asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o Vision - Analyze Asset": {
+      "main": [
+        [
+          {
+            "node": "Extract Vision Description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Vision Description": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o - Generate Platform Captions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o - Generate Platform Captions": {
+      "main": [
+        [
+          {
+            "node": "Parse & Format Captions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Format Captions": {
+      "main": [
+        [
+          {
+            "node": "Route: Image or Video?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: Image or Video?": {
+      "main": [
+        [
+          {
+            "node": "Facebook - Upload Image Draft",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Instagram - Create Media Container",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Facebook - Upload Video Draft",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "TikTok - Upload Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook - Upload Image Draft": {
+      "main": [
+        [
+          {
+            "node": "Build Summary Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook - Upload Video Draft": {
+      "main": [
+        [
+          {
+            "node": "Build Summary Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram - Create Media Container": {
+      "main": [
+        [
+          {
+            "node": "Store IG Container ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store IG Container ID": {
+      "main": [
+        [
+          {
+            "node": "Wait 30s - IG Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 30s - IG Processing": {
+      "main": [
+        [
+          {
+            "node": "Instagram - Publish Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram - Publish Post": {
+      "main": [
+        [
+          {
+            "node": "Build Summary Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TikTok - Upload Draft": {
+      "main": [
+        [
+          {
+            "node": "Build Summary Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Summary Report": {
+      "main": [
+        [
+          {
+            "node": "Slack - Send Success Notification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Sheets - Log Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "916ca925-b800-495b-8c86-93fb18bcedd0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "563081422b97a9613202fc9e330444d764a4b838aee8c810ae24b64e312e87c7"
+  },
+  "id": "toSyPfjk26u4tupZ",
+  "tags": []
+}
