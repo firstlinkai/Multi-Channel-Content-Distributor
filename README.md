@@ -1,3 +1,6 @@
+<img width="1376" height="768" alt="Content_automation_workflow_GitH…_202606030039" src="https://github.com/user-attachments/assets/e6eb6d68-99ff-4d31-a08a-0d2495847b96" />
+
+
 # 🏝️ Multi-Channel Content Distributor
 
 > **Post Once. Reach Everywhere.**
